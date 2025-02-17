@@ -29,29 +29,33 @@ try:
 except Exception as e:
     print(f"Error connecting to MongoDB: {e}")
 
-# Function to dynamically create and validate schema (Improved)
+# Function to store user info with dynamic schema handling
 def store_user_info(data: Dict[str, Any]) -> str:
     if not data:
         return "⚠️ No data received."
 
     try:
-        fields = {}
-        for k, v in data.items():
-            field_type = type(v) if v is not None else str  # Handle None values and infer type
-            fields[k] = (Optional[field_type], None)
+        # Define fixed fields
+        fixed_fields = ['name', 'age', 'gender']
+        
+        # Extract and cast fields to string, early return for missing fields
+        user_data = {field: str(data[field]) for field in fixed_fields if field in data}
+        if len(user_data) != len(fixed_fields):
+            return f"⚠️ Missing required fields: {', '.join(set(fixed_fields) - user_data.keys())}"
 
-        DynamicUserInfo = create_model("DynamicUserInfo", **fields)
-        user_info = DynamicUserInfo(**data)
-        user_data = user_info.dict(exclude_none=True)
+        # Add created_at timestamp
         user_data["created_at"] = datetime.now()
 
-        users_collection.insert_one(user_data)
-        return f"✅ User info stored: {user_data}"
+        # Upsert data into MongoDB
+        result = users_collection.update_one(
+            {"name": user_data["name"]},
+            {"$set": user_data},
+            upsert=True
+        )
+        return f"✅ User info {'inserted' if result.upserted_id else 'updated'} for {user_data['name']}"
 
-    except ValueError as e:
-        return f"❌ Validation Error: {e}"
     except Exception as e:
-        return f"❌ An error occurred during database operation: {e}"  # More specific error message
+        return f"❌ An error occurred during database operation: {e}"
 
 # AutoGen Agents
 config_list = [{
@@ -65,36 +69,31 @@ assistant = ConversableAgent(
     llm_config={"config_list": config_list},
     system_message=(
         "You are a helpful assistant. "
-        "You have access to a MongoDB database where you can store any user data provided. "
+        "You have access to a MongoDB database where you can store user data. "
         "Your tasks are:\n"
-        "1. **Data Extraction**: Receive user inputs and extract all relevant information, regardless of the fields provided. You should handle dynamic data without relying on any predefined schemas.\n"
-        "2. **Avoiding Duplicates**: When storing data, avoid creating duplicate entries. Use a unique identifier (e.g., 'name' or any other appropriate field) to check if a record already exists.\n"
-        "3. **Upserting Data**: Use MongoDB's `update_one` operation with `upsert: true` to insert new records or update existing ones based on the unique identifier.\n"
-        "4. **Including Timestamps**: Always include a `created_at` timestamp indicating when the data was stored.\n"
-        "5. **Response Format**: Return **only** the MongoDB query as a JSON object. Do not include any additional text or explanations.\n"
+        "1. **Data Extraction**: Receive user inputs and extract relevant information for the fields: `name`, `age`, and `gender`. Use the user's input to fill these fields.\n"
+        "2. **Data Mapping**: Dynamically map the extracted information to the fixed schema without hardcoding any values.\n"
+        "3. **Avoiding Duplicates**: When storing data, avoid creating duplicate entries. Use the `name` field as a unique identifier to check if a record already exists.\n"
+        "4. **Upserting Data**: Use MongoDB's `update_one` operation with `upsert: true` to insert new records or update existing ones based on the `name` field.\n"
+        "5. **Including Timestamps**: Always include a `created_at` timestamp indicating when the data was stored.\n"
+        "6. **Response Format**: Return **only** the MongoDB query as a JSON object. Do not include any additional text or explanations.\n"
         "   - For upserting data:\n"
         "     ```json\n"
         "     {\n"
         "       \"update_one\": {\n"
-        "         \"filter\": {\"unique_field\": \"value\"},\n"
-        "         \"update\": {\"$set\": {\"field1\": \"value1\", \"field2\": \"value2\", \"created_at\": \"timestamp\"}},\n"
+        "         \"filter\": {\"name\": \"<user's name>\"},\n"
+        "         \"update\": {\"$set\": {\"name\": \"<user's name>\", \"age\": \"<user's age>\", \"gender\": \"<user's gender>\", \"created_at\": \"<timestamp>\"}},\n"
         "         \"upsert\": true\n"
         "       }\n"
         "     }\n"
         "     ```\n"
-        "   - For finding data:\n"
-        "     ```json\n"
-        "     {\n"
-        "       \"find\": {\"field\": \"value\"}\n"
-        "     }\n"
-        "     ```\n"
-        "6. **Termination**: If the user indicates that the conversation is over, return:\n"
+        "7. **Termination**: If the user indicates that the conversation is over, return:\n"
         "   ```json\n"
         "   {\"TERMINATE\": true}\n"
         "   ```\n"
-        "7. **Error Handling**: If you cannot extract any relevant information, return an empty JSON object `{}`.\n"
+        "8. **Error Handling**: If you cannot extract any relevant information, return an empty JSON object `{}`.\n"
         "\n"
-        "Remember, you should **not hardcode** any fields or values. Handle all data dynamically based on the user's input. Ensure the workflow is flexible and can adapt to any information the user provides."
+        "Remember, you should dynamically extract and map the user's input to the fixed schema (`name`, `age`, `gender`) without hardcoding any field values. Let the LLM handle the extraction and ensure the workflow remains flexible."
     )
 )
 
@@ -110,7 +109,7 @@ user_proxy = UserProxyAgent(  # Corrected is_termination_msg
 
 
 # Register MongoDB tool (for both LLM and execution)
-assistant.register_for_llm(name="store_user_info", description="Stores information in MongoDB.  The data should be a JSON object.")(store_user_info)
+assistant.register_for_llm(name="store_user_info", description="Stores information in MongoDB. The data should be a JSON object.")(store_user_info)
 assistant.register_for_execution(name="store_user_info")(store_user_info)
 user_proxy.register_for_execution(name="store_user_info")(store_user_info)
 
@@ -140,11 +139,16 @@ def process_user_input():
                         filter_query = query['update_one']['filter']
                         update_query = query['update_one']['update']
                         upsert = query['update_one'].get('upsert', False)
+                        # Convert timestamp string back to datetime object
+                        if 'created_at' in update_query['$set']:
+                            update_query['$set']['created_at'] = datetime.strptime(
+                                update_query['$set']['created_at'], "%Y-%m-%d %H:%M:%S"
+                            )
                         result = users_collection.update_one(filter_query, update_query, upsert=upsert)
                         if result.upserted_id:
                             print(f"Assistant: Data inserted with ID {result.upserted_id}")
                         else:
-                            print(f"Assistant: Data updated. Matched count: {result.matched_count}")
+                            print(f"Assistant: Data updated for {filter_query['name']}")
                     elif 'find' in query:
                         results = users_collection.find(query['find'])
                         results_list = list(results)
