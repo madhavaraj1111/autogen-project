@@ -1,39 +1,24 @@
 import os
 import json
 from dotenv import load_dotenv
-from autogen import ConversableAgent,UserProxyAgent,AssistantAgent
-from pydantic import BaseModel,create_model
-from typing import Annotated,Dict,Any,Optional
-from pymongo import MongoClient
+from autogen import ConversableAgent, UserProxyAgent
 from datetime import datetime
-import re
+from pymongo import MongoClient
+from typing import Dict, Any
 
 # Load environment variables
 load_dotenv()
 
 # MongoDB connection
-client = MongoClient('mongodb+srv://madhavaraj1111:2004madhav@cluster0.lwkaz.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0')
+client = MongoClient(os.getenv("MONGO_URI"))
 db = client['testingautogen']
 users_collection = db['users']
-
-
-# MongoDB connection (using environment variables is best practice)
-MONGO_URI = os.getenv("MONGO_URI")  # Set this in your .env file
-if not MONGO_URI:
-    raise ValueError("MONGO_URI environment variable not set.")
-
-try:
-    client = MongoClient(MONGO_URI)
-    db = client['testingautogen']
-    users_collection = db['users']
-except Exception as e:
-    print(f"Error connecting to MongoDB: {e}")
 
 # Function to store user info with dynamic schema handling
 def store_user_info(data: Dict[str, Any]) -> str:
     if not data:
         return "⚠️ No data received."
-
+    
     try:
         # Define fixed fields
         fixed_fields = ['name', 'age', 'gender']
@@ -42,7 +27,7 @@ def store_user_info(data: Dict[str, Any]) -> str:
         user_data = {field: str(data[field]) for field in fixed_fields if field in data}
         if len(user_data) != len(fixed_fields):
             return f"⚠️ Missing required fields: {', '.join(set(fixed_fields) - user_data.keys())}"
-
+        
         # Add created_at timestamp
         user_data["created_at"] = datetime.now()
 
@@ -60,10 +45,11 @@ def store_user_info(data: Dict[str, Any]) -> str:
 # AutoGen Agents
 config_list = [{
     "model": "llama-3.3-70b-versatile",  # Or any other model you have access to
-    "api_key": "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",  # Replace with your actual key
+    "api_key": "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",  # Replace with your actual key
     "api_type": "groq",
     "temperature": 0.9,
 }]
+
 assistant = ConversableAgent(
     name="assistant",
     llm_config={"config_list": config_list},
@@ -76,28 +62,10 @@ assistant = ConversableAgent(
         "3. **Avoiding Duplicates**: When storing data, avoid creating duplicate entries. Use the `name` field as a unique identifier to check if a record already exists.\n"
         "4. **Upserting Data**: Use MongoDB's `update_one` operation with `upsert: true` to insert new records or update existing ones based on the `name` field.\n"
         "5. **Including Timestamps**: Always include a `created_at` timestamp indicating when the data was stored.\n"
-        "6. **Response Format**: Return **only** the MongoDB query as a JSON object. Do not include any additional text or explanations.\n"
-        "   - For upserting data:\n"
-        "     ```json\n"
-        "     {\n"
-        "       \"update_one\": {\n"
-        "         \"filter\": {\"name\": \"<user's name>\"},\n"
-        "         \"update\": {\"$set\": {\"name\": \"<user's name>\", \"age\": \"<user's age>\", \"gender\": \"<user's gender>\", \"created_at\": \"<timestamp>\"}},\n"
-        "         \"upsert\": true\n"
-        "       }\n"
-        "     }\n"
-        "     ```\n"
-        "7. **Termination**: If the user indicates that the conversation is over, return:\n"
-        "   ```json\n"
-        "   {\"TERMINATE\": true}\n"
-        "   ```\n"
-        "8. **Error Handling**: If you cannot extract any relevant information, return an empty JSON object `{}`.\n"
-        "\n"
-        "Remember, you should dynamically extract and map the user's input to the fixed schema (`name`, `age`, `gender`) without hardcoding any field values. Let the LLM handle the extraction and ensure the workflow remains flexible."
+        "6. **Error Handling**: If you cannot extract any relevant information, return an empty JSON object `{}`.\n"
+        "7. **Terminate**: Return a termination message if the user indicates the conversation is over."
     )
 )
-
-
 
 user_proxy = UserProxyAgent(  # Corrected is_termination_msg
     name="User",
@@ -107,12 +75,46 @@ user_proxy = UserProxyAgent(  # Corrected is_termination_msg
     code_execution_config={"use_docker": False}
 )
 
-
 # Register MongoDB tool (for both LLM and execution)
-assistant.register_for_llm(name="store_user_info", description="Stores information in MongoDB. The data should be a JSON object.")(store_user_info)
+assistant.register_for_llm(name="store_user_info", description="Stores information in MongoDB.")(store_user_info)
 assistant.register_for_execution(name="store_user_info")(store_user_info)
 user_proxy.register_for_execution(name="store_user_info")(store_user_info)
 
+# CRUD operations functions
+
+def create_user(data: Dict[str, Any]):
+    """Create a new user in MongoDB."""
+    return store_user_info(data)
+
+def update_user(data: Dict[str, Any]):
+    """Update existing user information in MongoDB."""
+    return store_user_info(data)
+
+# Function to delete user by name
+def delete_user(name: str) -> str:
+    try:
+        # Check if the user exists
+        result = users_collection.delete_one({"name": name})
+
+        if result.deleted_count == 1:
+            return f"✅ User '{name}' has been deleted."
+        else:
+            return f"⚠️ No user found with the name '{name}'."
+    except Exception as e:
+        return f"❌ An error occurred during deletion: {e}"
+
+
+def find_user(name: str):
+    """Retrieve user data from MongoDB by name."""
+    result = users_collection.find_one({"name": name})
+    if result:
+        return f"✅ User found: {result}"
+    else:
+        return "⚠️ User not found."
+
+# Register delete function
+assistant.register_for_llm(name="delete_user", description="Deletes user from MongoDB based on name.")(delete_user)
+user_proxy.register_for_execution(name="delete_user")(delete_user)
 
 
 def process_user_input():
@@ -134,25 +136,18 @@ def process_user_input():
                     break
 
                 if query:
-                    # Execute the query based on its type
-                    if 'update_one' in query:
-                        filter_query = query['update_one']['filter']
-                        update_query = query['update_one']['update']
-                        upsert = query['update_one'].get('upsert', False)
-                        # Convert timestamp string back to datetime object
-                        if 'created_at' in update_query['$set']:
-                            update_query['$set']['created_at'] = datetime.strptime(
-                                update_query['$set']['created_at'], "%Y-%m-%d %H:%M:%S"
-                            )
-                        result = users_collection.update_one(filter_query, update_query, upsert=upsert)
-                        if result.upserted_id:
-                            print(f"Assistant: Data inserted with ID {result.upserted_id}")
-                        else:
-                            print(f"Assistant: Data updated for {filter_query['name']}")
-                    elif 'find' in query:
-                        results = users_collection.find(query['find'])
-                        results_list = list(results)
-                        print(f"Assistant: Retrieved data: {results_list}")
+                    if 'create' in query:  # Handle create operation
+                        user_data = query.get("create", {})
+                        print(create_user(user_data))
+                    elif 'update' in query:  # Handle update operation
+                        user_data = query.get("update", {})
+                        print(update_user(user_data))
+                    elif 'delete' in query:  # Handle delete operation
+                        name_to_delete = query.get("delete", "")
+                        print(delete_user(name_to_delete))  # Pass the name to delete
+                    elif 'find' in query:  # Handle find operation
+                        name = query.get("find", "")
+                        print(find_user(name))
                     else:
                         print("Assistant: Unrecognized query operation.")
                 else:
@@ -165,6 +160,4 @@ def process_user_input():
             print("Assistant: No content received from assistant.")
 
     print("Conversation ended.")
-
-# Start processing user input
 process_user_input()
