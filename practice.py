@@ -2,11 +2,10 @@ import os
 from autogen import ConversableAgent,UserProxyAgent
 from autogen.coding import LocalCommandLineCodeExecutor
 from pymongo import MongoClient
-import json
 import tempfile
+import json
 
 temp_dir=tempfile.TemporaryDirectory()
-
 
 client = MongoClient(os.getenv("MONGO_URI"))
 db = client['testingautogen']
@@ -25,16 +24,9 @@ query_writer_agent=ConversableAgent(
     llm_config={"config_list":config_list},
 )
 
-user_proxy = UserProxyAgent(
-	name="User",
-	llm_config=False,
-	is_termination_msg=lambda msg: msg.get("content") is not None and "TERMINATE" in msg["content"],
-	human_input_mode="TERMINATE",
-	code_execution_config=False
-)
 
 local_executor=LocalCommandLineCodeExecutor(
-    timeout=10,
+	timeout=10,
     work_dir=temp_dir.name,
 )
 
@@ -44,9 +36,16 @@ local_executor_agent = ConversableAgent(
 	llm_config=False,
 	code_execution_config={"executor": local_executor},
 	human_input_mode="ALWAYS",
+	is_termination_msg=lambda msg:"TERMINATION" in msg["content"].upper(),
 )
 
-messages = ["Insert name Ragul age 30 and gender Male in the database"]
+user_proxy = UserProxyAgent(
+	name="user_proxy",
+	code_execution_config={"executor":local_executor},
+	
+)
+
+messages = ["Update Jegan age to 24"]
 
 # Intialize the chat
 chat_result = local_executor_agent.initiate_chat(
@@ -54,7 +53,4 @@ chat_result = local_executor_agent.initiate_chat(
 	message=messages[0],
 )
 
-
-
-
-
+temp_dir.cleanup()
