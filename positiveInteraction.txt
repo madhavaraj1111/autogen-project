@@ -1,0 +1,40 @@
+Here are some example messages you can use to test the improved code, along with explanations of what each message should do:
+
+**Insert/Create:**
+
+*   **"Add a user named David, age 35, gender Male."**  The LLM should generate an `insert_one` or `insert_many` query (if you want to test multiple inserts at once, provide multiple user objects).
+*   **"Add users:  { 'name': 'Alice', 'age': 25, 'gender': 'Female' }, { 'name': 'Bob', 'age': 40, 'gender': 'Male' }"**  This tests the insertion of multiple users. The LLM should generate an `insert_many` query.
+
+**Find/Read:**
+
+*   **"Find all users."** The LLM should generate a `find` query with no filter (or an empty filter `{}`), effectively retrieving all documents.
+*   **"Find users named Alice."** The LLM should generate a `find` query with a filter `{'name': 'Alice'}`.
+*   **"Find users older than 30."** The LLM should generate a `find` query with a filter `{'age': {'$gt': 30}}`.
+*   **"Find users named Alice and return only their age."** The LLM should generate a `find` query with a filter and a projection `{'name': 1, 'age': 1, '_id':0}` (to exclude the `_id` field, which is included by default).
+*   **"Find the first two users."** The LLM should generate a `find` query with a `limit` of 2.
+*   **"Find users sorted by name."** The LLM should generate a `find` query with a `sort` parameter `[('name', 1)]` (for ascending order).  For descending, use `[('name', -1)]`.
+
+**Update:**
+
+*   **"Update Alice's age to 26."** The LLM should generate an `update_one` query with a filter `{'name': 'Alice'}` and an update `{'age': 26}`.
+*   **"Update all users older than 30 and set their status to 'Senior'."** The LLM should generate an `update_many` query.
+
+**Delete:**
+
+*   **"Delete user Bob."** The LLM should generate a `delete_one` query with a filter `{'name': 'Bob'}`.
+*   **"Delete all users older than 40."** The LLM should generate a `delete_many` query.
+
+**Error Handling:**
+
+*   **"Find users with a height of 6 feet."** (Assuming 'height' is not a field in your documents). This will test error handling. The LLM might generate a `find` query, but the MongoDB query itself will return an empty result because the field doesn't exist. Your code should handle this gracefully.
+*   **"Nonsense request."**  This will test how the LLM handles unclear or invalid requests. It should return an error message.
+
+**Important Considerations for Testing:**
+
+*   **Start with a small dataset:**  It's easier to verify the results if you have a small number of users in your database initially.
+*   **Check the printed queries:**  The code prints the generated MongoDB queries.  Carefully examine these queries to ensure they are correct before they are executed. This is crucial for debugging.
+*   **Verify the results in MongoDB:** After each operation, check your MongoDB database directly to confirm that the changes were applied correctly.  This is the ultimate test.
+*   **Test edge cases:** Try requests that might be unusual or boundary conditions (e.g., updating a user that doesn't exist, deleting all users).
+*   **"exit":**  Use this command to terminate the conversation.
+
+By using these test messages and carefully examining the generated queries and the results in your database, you can thoroughly test your code and ensure it's working as expected.  Remember to adapt the tests to match the actual fields and data in your MongoDB collection.
